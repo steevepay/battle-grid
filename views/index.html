@@ -8,6 +8,8 @@
     <script src="./phaser-input.js"></script>
     <!-- custom imports -->
     <script src="./views/js/loadAssets.js"></script>
+    <script src="./views/js/initItems.js"></script>
+    <!-- css -->
     <style type="text/css">
         body {
             margin: 0;
@@ -32,68 +34,43 @@
     let idPlayer = null;
     let idRoom = null;
     let statusRoom = 0;
+    let config = null;
     let validateArmy = false;
+
+    // about scene items
     let menuItems = initMenuItems();
     let waitingItems = initWaitingItems();
     let joinItems = initJoinItems();
+    let selectionLeaderItems = initSelectionLeaderItems();
     let selectionItems = initSelectionItems();
     let gameItems = initGameItems();
     let winnerItems = initWinnerItems();
 
     // about selection scene
     let money = null;
+    let nbUnits = null;
     let army = null;
+    let myLeader = null;
 
     // about graphics (in round)
     const sizeGrid = 15;
     const sizeCell = 45;
     const beginX = (windowWidth / 2) - (sizeCell * sizeGrid / 2);
     const beginY = (windowHeight / 2) - (sizeCell * sizeGrid / 2);
+    let beginTurn = null;
 
     // about gameplay
     let statusGame = null;
     let statusGameChanged = null;
     let myTurn = null;
     let selectedUnit = null;
-    const listUnits = ["peasant", "shieldman", "soldier", "bowman", "ninja", "doctor", "knight", "crossbowman", "necromancer"];
-    const selectionInfoUnit = {
-        peasant: {
-            description: "Pesant: basic unit. (10 gold)",
-            price: 10
-        },
-        shieldman: {
-            description: "Shieldman: a wall with two eyes. (10 gold)",
-            price: 10
-        },
-        bowman: {
-            description: "Bowman: mysterious and pretty accurate. (20 gold)",
-            price: 20
-        },
-        soldier: {
-            description: "Soldier: just a peasant with an armor. (20 gold)",
-            price: 20
-        },
-        ninja: {
-            description: "Ninja: fast. strong. handsome. (30 gold)",
-            price: 30
-        },
-        doctor: {
-            description: "Doctor: here to repay his studies's debt. (30 gold)",
-            price: 30
-        },
-        knight: {
-            description: "Knight: really heavy baby. (40 gold)",
-            price: 40
-        },
-        crossbowman: {
-            description: "Crossbowman: unofficial son of Guillaume Tell. (40 gold)",
-            price: 40
-        },
-        necromancer: {
-            description: "Necromancer: death is never definitive. (50 gold)",
-            price: 50
-        },
-    }
+    const listLeaders = ["rich_king", "queen_of_slaves", "ulfrik_the_terror"];
+    const listUnits = ["peasant", "shieldman", "bowman", "soldier", "ninja", "crossbowman", "doctor", "knight", "necromancer"];
+
+    // about animations
+    listSprite = null;
+    listAnimations = null;
+    nbAnimations = 0;
 
     // about api
     const baseUrl = "/api";
@@ -105,58 +82,79 @@
     }
 
     async function create() {
+        config = sendRequest(baseUrl + "/config", "GET").config;
         idPlayer = sendRequest(baseUrl + "/id_player", "GET").idPlayer;
-        console.log(`id player : ${idPlayer}`);
         displayMenu();
     }
 
-    function update() {
+    async function update() {
         if (idxFrame % 10 == 0) {
-            responsive();
             if (idRoom !== null) {
                 tmpStatusRoom = sendRequest(baseUrl + "/status_room/" + idRoom, "GET");
-                if (tmpStatusRoom.status === 2 && statusRoom === 1) { // two players are here, need to select army
-                    destroyWaiting();
-                    displaySelection();
-                } else if (tmpStatusRoom.status === 3 && statusRoom === 2) { // two players choosed their army, start game
-                    statusGame = sendRequest(baseUrl + "/status_game/" + idRoom + "?idPlayer=" + idPlayer, "GET");
-                    destroySelection();
-                    displayGrid();
-                    checkTurnOver();
-                    displayArmies();
-                } else if (tmpStatusRoom.status === 4 && statusRoom === 3) { // one player win
-                    destroyGrid();
-                    displayWinner(tmpStatusRoom.winner);
-                }
-                statusRoom = tmpStatusRoom.status;
+                statusRoom = updateManagementRoom(tmpStatusRoom);
                  if (statusRoom === 3) {
-                    const tmpStatusGame = sendRequest(baseUrl + "/status_game/" + idRoom + "?idPlayer=" + idPlayer, "GET");
-                    if (statusGameChanged === null || JSON.stringify(tmpStatusGame) !== JSON.stringify(statusGame)) {
-                        statusGameChanged = true;
-                    } else {
-                        statusGameChanged = false;
-                    }
-                    statusGame = tmpStatusGame;
-                    if (statusGame.turnPlayer === idPlayer) {
-                        myTurn = true;
-                    } else {
-                        myTurn = false;
-                    }
-                    checkTurnOver();
-                    displayArmies();
+                    updateManagementGame();
                 }
             }
         } else {
-            if (idRoom === null) {
-                for (let i = 0; i < menuItems.images.length; i++) {
-                    menuItems.images[i].x += 1;
-                    if (menuItems.images[i].x >= windowWidth) {
-                        menuItems.images[i].x = 0;
-                    }
+            updateScrollUnitsMenu();
+        }
+        idxFrame++;
+    }
+
+    function updateManagementRoom(tmpStatusRoom) {
+        if (tmpStatusRoom.status === 2 && statusRoom === 1) { // two players are here, need to select army
+            destroyWaiting();
+            displaySelectionLeader();
+        } else if (tmpStatusRoom.status === 3 && statusRoom === 2) { // two players choosed their army, start game
+            statusGame = sendRequest(baseUrl + "/status_game/" + idRoom + "?idPlayer=" + idPlayer, "GET");
+            destroySelection();
+            displayGrid();
+            checkTurnOver();
+            displayArmies();
+        } else if (tmpStatusRoom.status === 4 && statusRoom === 3) { // one player win
+            destroyGrid();
+            displayWinner(tmpStatusRoom.winner);
+        }
+        return tmpStatusRoom.status;
+    }
+
+    async function updateManagementGame() {
+        while (nbAnimations > 0) {
+            await sleep(1000);
+            continue;
+        }
+        const tmpStatusGame = sendRequest(baseUrl + "/status_game/" + idRoom + "?idPlayer=" + idPlayer, "GET");
+        if (statusGameChanged === null || JSON.stringify(tmpStatusGame) !== JSON.stringify(statusGame)) {
+            statusGameChanged = true;
+        } else {
+            statusGameChanged = false;
+        }
+        statusGame = tmpStatusGame;
+        if (statusGame.turnPlayer === idPlayer) {
+            if (myTurn === null || myTurn === false) {
+                beginTurn = true;
+            }
+            myTurn = true;
+        } else {
+            myTurn = false;
+        }
+        checkTurnOver();
+        displayArmies();
+        if (statusGame.animations.length > 0) {
+            displayAnimations();
+        }
+    }
+
+    function updateScrollUnitsMenu() {
+        if (idRoom === null) {
+            for (let i = 0; i < menuItems.images.length; i++) {
+                menuItems.images[i].x += 1;
+                if (menuItems.images[i].x >= windowWidth) {
+                    menuItems.images[i].x = 0;
                 }
             }
         }
-        idxFrame++;
     }
 
     /* _________________________________ SCENE 0 - MENU _________________________________ */
@@ -169,7 +167,10 @@
         menuItems.graphics.lineTo(line.end.x,line.end.y);
         menuItems.graphics.endFill();
         // add title
-        menuItems.title = game.add.bitmapText(0, windowHeight / 2 - 60, 'font', 'BATTLE GRID', 40);
+        // menuItems.title = game.add.bitmapText(0, windowHeight / 2 - 60, 'font', 'BATTLE GRID', 40);
+        // menuItems.title.x = windowWidth / 2 - menuItems.title.width - 10;
+        menuItems.title = game.add.image(0, windowHeight / 2 - 200, 'logo');
+        menuItems.title.scale.setTo(0.5, 0.5);
         menuItems.title.x = windowWidth / 2 - menuItems.title.width - 10;
         // add menu buttons
         menuItems.buttons["new"] = game.add.button(windowWidth / 2, windowHeight / 2 + 25, "new", () => {createRoom();});
@@ -209,16 +210,6 @@
         menuItems = initMenuItems();
     }
 
-    function initMenuItems() {
-        return {
-            title: null,
-            graphics: null,
-            buttons: {},
-            text: {},
-            images: []
-        };
-    }
-
     function createRoom() {
         destroyMenu();
         idRoom = sendRequest(baseUrl + "/create_room?idPlayer=" + idPlayer, "GET").idRoom;
@@ -234,7 +225,7 @@
         idRoom = sendRequest(baseUrl + "/random_room?idPlayer=" + idPlayer, "GET").idRoom;
         if (idRoom !== null) {
             destroyMenu();
-            displaySelection();
+            displaySelectionLeader();
         } else {
             menuItems.text["errorMessage"].text = "No game found, sorry bro.";
             menuItems.text["errorMessage"].tint = 0xFF0000;
@@ -266,14 +257,6 @@
         }
     }
 
-    function initWaitingItems() {
-        return {
-            title: null,
-            graphics: null,
-            room: null
-        };
-    }
-
     /* _________________________________ SCENE 1.1 - JOIN _________________________________ */
 
     function displayJoin() {
@@ -303,7 +286,7 @@
         if (response.status === 0) {
             idRoom = codeRoom;
             destroyJoin();
-            displaySelection();
+            displaySelectionLeader();
         } else {
             joinItems.errorMessage.tint = 0xFFFFFF;
             joinItems.errorMessage.text = response.errorMessage;
@@ -325,100 +308,188 @@
         displayMenu();
     }
 
-    function initJoinItems() {
-        return {
-            title: null,
-            graphics: null,
-            input: null,
-            buttonValidation: null,
-            backButton: null,
-            errorMessage: null,
-            room: null
-        };
+    /* _________________________________ SCENE 2.1 - SELECTION OF LEADER _________________________________ */
+
+    function displaySelectionLeader() {
+        myLeader = null;
+        // add title
+        selectionLeaderItems.shadowTitle = game.add.bitmapText(0, windowHeight / 2 - 300 + 3, 'font', 'SELECT YOUR LEADER', 40);
+        selectionLeaderItems.shadowTitle.centerX = windowWidth / 2 + 3;
+        selectionLeaderItems.shadowTitle.tint = 0x0000FF;
+        selectionLeaderItems.title = game.add.bitmapText(0, windowHeight / 2 - 300, 'font', 'SELECT YOUR LEADER', 40);
+        selectionLeaderItems.title.centerX = windowWidth / 2;
+        // add buttons selection
+        let idx = Math.round(0 - listLeaders.length / 2 + 0.5);
+        for (const leader of listLeaders) {
+            addSelectionLeader(leader, idx);
+            idx++;
+        }
+        // add description
+        selectionLeaderItems.text['description'] = game.add.bitmapText(0, windowHeight / 2 + 300, 'font', "click on an leader to see its details", 30);
+        selectionLeaderItems.text['description'].centerX = windowWidth / 2;
     }
 
-    /* _________________________________ SCENE 2 - SELECTION _________________________________ */
+    function addSelectionLeader(leader, idx) {
+        // leader asset
+        selectionLeaderItems.buttons[leader] = game.add.button(0, 0, leader, () => {selectLeader(leader, windowWidth / 2 + (idx * 300), windowHeight / 2);});
+        selectionLeaderItems.buttons[leader].scale.setTo(0.7, 0.7);
+        selectionLeaderItems.buttons[leader].centerX = windowWidth / 2 + (idx * 300);
+        selectionLeaderItems.buttons[leader].centerY = windowHeight / 2;
+    }
+
+    function destroySelectionLeader() {
+        selectionLeaderItems.title.destroy();
+        selectionLeaderItems.shadowTitle.destroy();
+        selectionLeaderItems.border.destroy();
+        for (const [buttonKey, buttonValue] of Object.entries(selectionLeaderItems.buttons)) {
+            selectionLeaderItems.buttons[buttonKey].destroy();
+        }
+        for (const [textKey, textValue] of Object.entries(selectionLeaderItems.text)) {
+            selectionLeaderItems.text[textKey].destroy();
+        }
+        selectionLeaderItems = initSelectionLeaderItems();
+    }
+
+    function selectLeader(selectedLeader, centerX, centerY) {
+        myLeader = selectedLeader;
+        if (selectionLeaderItems.border !== null) {
+            selectionLeaderItems.border.destroy();
+        }
+        selectionLeaderItems.border = game.add.image(0, 0, "redBorder");
+        selectionLeaderItems.border.scale.setTo(0.7, 0.7);
+        selectionLeaderItems.border.centerX = centerX;
+        selectionLeaderItems.border.centerY = centerY;
+        selectionLeaderItems.text['description'].text = config.leaders[selectedLeader].description;
+        selectionLeaderItems.text['description'].centerX = windowWidth / 2;
+        // add button validate
+        if (!("validate" in selectionLeaderItems.buttons)) {
+            selectionLeaderItems.buttons['validate'] = game.add.button(0, windowHeight - 100, "validate", () => {validateLeader()});
+            selectionLeaderItems.buttons['validate'].scale.setTo(0.2, 0.2);
+            selectionLeaderItems.buttons['validate'].centerX = windowWidth / 2;
+        }
+    }
+
+    function validateLeader() {
+        destroySelectionLeader();
+        displaySelection();
+    }
+
+    /* _________________________________ SCENE 2.2 - SELECTION OF ARMY _________________________________ */
 
     function displaySelection() {
-        money = 200;
+        money = (myLeader === "rich_king") ? config.round.money + 100 : config.round.money;
         army = initalizeArmy();
-        // add title
+        nbUnits = config.round.maxUnits;
+        // add title and shadow title
+        selectionItems.shadowTitle = game.add.bitmapText(0, windowHeight / 2 - 300 + 3, 'font', 'SELECT YOUR UNITS', 40);
+        selectionItems.shadowTitle.centerX = windowWidth / 2 + 3;
+        selectionItems.shadowTitle.tint = 0xFF0000;
         selectionItems.title = game.add.bitmapText(0, windowHeight / 2 - 300, 'font', 'SELECT YOUR UNITS', 40);
         selectionItems.title.centerX = windowWidth / 2;
         // add line money
         selectionItems.text['money'] = game.add.bitmapText(0, windowHeight / 2 - 200, 'font', `${money} gold`, 30);
-        selectionItems.text['money'].centerX = windowWidth / 2;
+        selectionItems.text['money'].centerX = windowWidth / 3;
+        // add line max units
+        selectionItems.text['units'] = game.add.bitmapText(0, windowHeight / 2 - 200, 'font', `Units: ${config.round.maxUnits - nbUnits}/${config.round.maxUnits}`, 30);
+        selectionItems.text['units'].centerX = windowWidth / 3 * 2;
         // add buttons selection
         let idx = 0 - listUnits.length / 2;
         for (const unit of listUnits) {
-            selectionItems.buttons[unit] = game.add.button(windowWidth / 2 + (idx * 150), windowHeight / 2, unit, () => {displayUnitDetails(unit);});
-            selectionItems.buttons[unit].scale.setTo(0.5, 0.5);
-            // button more
-            selectionItems.buttons[unit + "_more"] = game.add.button(0, 0, "more", () => {addUnit(unit);});
-            selectionItems.buttons[unit + "_more"].scale.setTo(0.15, 0.15);
-            selectionItems.buttons[unit + "_more"].centerX = selectionItems.buttons[unit].centerX;
-            selectionItems.buttons[unit + "_more"].centerY = selectionItems.buttons[unit].centerY - selectionItems.buttons[unit].height / 2 - selectionItems.buttons[unit + "_more"].height / 2 - 10;
-            // button less
-            selectionItems.buttons[unit + "_less"] = game.add.button(0, 0, "less", () => {removeUnit(unit);});
-            selectionItems.buttons[unit + "_less"].scale.setTo(0.15, 0.15);
-            selectionItems.buttons[unit + "_less"].centerX = selectionItems.buttons[unit].centerX;
-            selectionItems.buttons[unit + "_less"].centerY = selectionItems.buttons[unit].centerY + selectionItems.buttons[unit].height / 2 + selectionItems.buttons[unit + "_less"].height / 2 + 10;
-            // number of units
-            selectionItems.text[unit + "_number"] = game.add.bitmapText(0, 0, 'font', "x0", 30);
-            selectionItems.text[unit + "_number"].centerX = selectionItems.buttons[unit].centerX;
-            selectionItems.text[unit + "_number"].centerY = selectionItems.buttons[unit + "_less"].centerY + selectionItems.buttons[unit + "_less"].height / 2 + selectionItems.text[unit + "_number"].height / 2 + 10;
+            addSelectionUnit(unit, idx);
             idx++;
         }
-        // add tips
-        selectionItems.text['tips'] = game.add.bitmapText(0, windowHeight / 2 + 300, 'font', "click on an unit to see its details", 30);
-        selectionItems.text['tips'].centerX = windowWidth / 2;
+        // add description
+        selectionItems.text['description'] = game.add.bitmapText(0, windowHeight / 2 + 230, 'font', "click on an unit to see its details", 30);
+        selectionItems.text['description'].centerX = windowWidth / 2;
+        selectionItems.text['bonus'] = game.add.bitmapText(0, windowHeight / 2 + 260, 'font', "", 30);
+        selectionItems.text['bonus'].centerX = windowWidth / 2;
+        selectionItems.text['bonus'].tint = 0xE1C80D;
         // add button validate
         selectionItems.buttons['validate'] = game.add.button(0, windowHeight - 100, "validate", () => {createArmy()});
         selectionItems.buttons['validate'].scale.setTo(0.2, 0.2);
         selectionItems.buttons['validate'].centerX = windowWidth / 2;
     }
 
+    function addSelectionUnit(unit, idx) {
+        // unit asset
+        selectionItems.buttons[unit] = game.add.button(windowWidth / 2 + (idx * 150), windowHeight / 2 - 50, unit, () => {displayUnitDetails(unit);});
+        selectionItems.buttons[unit].scale.setTo(0.5, 0.5);
+        // button more
+        selectionItems.buttons[unit + "_more"] = game.add.button(0, 0, "more", () => {addUnit(unit);});
+        selectionItems.buttons[unit + "_more"].scale.setTo(0.15, 0.15);
+        selectionItems.buttons[unit + "_more"].centerX = selectionItems.buttons[unit].centerX;
+        selectionItems.buttons[unit + "_more"].centerY = selectionItems.buttons[unit].centerY - selectionItems.buttons[unit].height / 2 - selectionItems.buttons[unit + "_more"].height / 2 - 10;
+        // button less
+        selectionItems.buttons[unit + "_less"] = game.add.button(0, 0, "less", () => {removeUnit(unit);});
+        selectionItems.buttons[unit + "_less"].scale.setTo(0.15, 0.15);
+        selectionItems.buttons[unit + "_less"].centerX = selectionItems.buttons[unit].centerX;
+        selectionItems.buttons[unit + "_less"].centerY = selectionItems.buttons[unit].centerY + selectionItems.buttons[unit].height / 2 + selectionItems.buttons[unit + "_less"].height / 2 + 10;
+        // number of units
+        selectionItems.text[unit + "_number"] = game.add.bitmapText(0, 0, 'font', "x0", 30);
+        selectionItems.text[unit + "_number"].centerX = selectionItems.buttons[unit].centerX;
+        selectionItems.text[unit + "_number"].centerY = selectionItems.buttons[unit + "_less"].centerY + selectionItems.buttons[unit + "_less"].height / 2 + selectionItems.text[unit + "_number"].height / 2 + 10;
+        // price on the icon
+        selectionItems.text[unit + "_price"] = game.add.bitmapText(0, 0, 'font', config.units[unit].price, 30);
+        selectionItems.text[unit + "_price"].centerX = selectionItems.buttons[unit + "_less"].centerX + selectionItems.buttons[unit + "_less"].width + 10;
+        selectionItems.text[unit + "_price"].centerY = selectionItems.buttons[unit + "_more"].centerY + 10;
+        selectionItems.text[unit + "_price"].tint = 0xE1C80D;
+    }
+
     function initalizeArmy() {
-        return {
-            peasant: 0,
-            shieldman: 0,
-            soldier: 0,
-            ninja: 0,
-            knight: 0,
-            bowman: 0,
-            doctor: 0,
-            crossbowman: 0,
-            necromancer: 0
-        };
+        const newArmy = {};
+        for (const unit of listUnits) {
+            newArmy[unit] = 0;
+        }
+        return newArmy;
     }
 
     function destroySelection() {
         selectionItems.title.destroy();
+        selectionItems.shadowTitle.destroy();
         for (const [buttonKey, buttonValue] of Object.entries(selectionItems.buttons)) {
             selectionItems.buttons[buttonKey].destroy();
         }
         for (const [textKey, textValue] of Object.entries(selectionItems.text)) {
             selectionItems.text[textKey].destroy();
         }
+        for (const [imageKey, imageValue] of Object.entries(selectionItems.images)) {
+            selectionItems.images[imageKey].destroy();
+        }
         selectionItems = initSelectionItems();
     }
 
     function displayUnitDetails(unit) {
-        selectionItems.text['tips'].text = selectionInfoUnit[unit].description;
-        selectionItems.text['tips'].centerX = windowWidth / 2;
+        const stats = `(HP [${config.units[unit].maxHp}] DMG [${config.units[unit].dmg}] RNG [${config.units[unit].move + config.units[unit].range}])`
+        selectionItems.text['description'].text = config.units[unit].description + ' ' + stats;
+        selectionItems.text['description'].centerX = windowWidth / 2;
+        selectionItems.text['bonus'].text = config.units[unit].bonus;
+        selectionItems.text['bonus'].centerX = windowWidth / 2;
     }
 
     function disaplayChange(unit) {
         selectionItems.text[unit + "_number"].text = `x${army[unit]}`;
         selectionItems.text[unit + "_number"].centerX = selectionItems.buttons[unit].centerX;
         selectionItems.text['money'].text = `${money} gold`;
-        selectionItems.text['money'].centerX = windowWidth / 2;
+        selectionItems.text['money'].centerX = windowWidth / 3;
+        if (money === 0) {
+            selectionItems.text['money'].tint = 0xFF0000;
+        } else {
+            selectionItems.text['money'].tint = 0xFFFFFF;
+        }
+        selectionItems.text['units'].text = `Units: ${config.round.maxUnits - nbUnits}/${config.round.maxUnits}`;
+        selectionItems.text['units'].centerX = windowWidth / 3 * 2;
+        if (nbUnits === 0) {
+            selectionItems.text['units'].tint = 0xFF0000;
+        }  else {
+            selectionItems.text['units'].tint = 0xFFFFFF;
+        }
     }
 
     function addUnit(unit) {
-        if (validateArmy === false && money >= selectionInfoUnit[unit].price) {
+        if (validateArmy === false && money >= config.units[unit].price && nbUnits > 0) {
             army[unit]++;
-            money -= selectionInfoUnit[unit].price;
+            money -= config.units[unit].price;
+            nbUnits--;
             disaplayChange(unit);
         }
     }
@@ -426,25 +497,22 @@
     function removeUnit(unit) {
         if (validateArmy === false && army[unit] > 0) {
             army[unit]--;
-            money += selectionInfoUnit[unit].price;
+            money += config.units[unit].price;
+            nbUnits++;
             disaplayChange(unit);
         }
-    }
-
-    function initSelectionItems() {
-        return {
-            title: null,
-            buttons: {},
-            text: {}
-        };
     }
 
     function createArmy() {
         validateArmy = true;
         selectionItems.buttons['validate'].destroy();
         delete selectionItems.buttons['validate'];
+        selectionItems.images['validated'] = game.add.image(0, windowHeight - 100, "validated");
+        selectionItems.images['validated'].scale.setTo(0.2, 0.2);
+        selectionItems.images['validated'].centerX = windowWidth / 2;
         const url = `${baseUrl}/create_army/${idRoom}?idPlayer=${idPlayer}`;
         sendRequest(url, "POST", JSON.stringify({
+            leader: myLeader,
             army: army
         }));
     }
@@ -469,13 +537,21 @@
         for (const obstacle of statusGame.obstacles) {
             const x = (idPlayer === statusGame.firstPlayer) ? beginX + (obstacle.x * sizeCell) : beginX + ((14 - obstacle.x) * sizeCell);
             const y = (idPlayer === statusGame.firstPlayer) ? beginY + (obstacle.y * sizeCell) : beginY + ((14 - obstacle.y) * sizeCell);
-            const imgObstacle = game.add.image(x, y, "obstacle");
+            let imgObstacle = null;
+            if (obstacle.type.includes("animation") === false) {
+                imgObstacle = game.add.image(x, y, obstacle.type);
+            } else {
+                imgObstacle = game.add.sprite(x, y, obstacle.type, 1);
+                imgObstacle.scale.setTo(0.17, 0.17);
+                const animation = imgObstacle.animations.add(obstacle.type);
+                animation.play(3, true);
+            }
             imgObstacle.scale.setTo(0.17, 0.17);
             gameItems.images.obstacles.push(imgObstacle);
         }
         gameItems.images["fog"] = [];
-        const nextButton = game.add.button(beginX + sizeCell * (sizeGrid - 1), beginY - 10 - sizeCell, "next", () => {skipTurn();});
-        nextButton.scale.setTo(sizeCell / nextButton.width, sizeCell / nextButton.height);
+        const nextButton = game.add.button(beginX + sizeCell * (sizeGrid) + 10, beginY, "next", () => {skipTurn();});
+        nextButton.scale.setTo((sizeCell / nextButton.width) * 2, sizeCell / nextButton.height);
         gameItems.buttons["next"] = nextButton;
     }
 
@@ -484,24 +560,13 @@
         if ("myArmy" in gameItems.buttons && "enemyArmy" in gameItems.buttons) {
             destroyArmies();
         }
-        if ("move" in gameItems.buttons) {
-            destroyButtonsMove();
-        }
-        if ("blocked" in gameItems.buttons) {
-            destroyArrayButtons("blocked");
-        }
-        if ("enemiesBorder" in gameItems.buttons) {
-            destroyArrayButtons("enemiesBorder");
-        }
-        if ("obstacles" in gameItems.images) {
-            destroyArrayImages("obstacles");
-        }
-        if ("ground" in gameItems.images) {
-            destroyArrayImages("ground");
-        }
-        if ("damaged" in gameItems.buttons) {
-            destroyArrayButtons("damaged");
-        }
+        destroyButtonsMove();
+        destroyArrayButtons("blocked");
+        destroyArrayButtons("enemiesBorder");
+        destroyArrayImages("obstacles");
+        destroyArrayImages("ground");
+        destroyArrayButtons("damaged");
+        destroyYourTurn();
         if ("next" in gameItems.buttons) {
             gameItems.buttons["next"].destroy();
         }
@@ -533,26 +598,75 @@
             addUnitButton(unit, "enemyArmy", () => {eventEnemy(unit)})
         }
         applyFog();
+        if (beginTurn === true) {
+            displayYourTurn();
+            beginTurn = false;
+        }
+        displayLogs();
+    }
+
+    function displayLogs() {
+        let idx = 0;
+        for (const log of statusGame.logs) {
+            if ('logs_' + idx in gameItems.text) {
+                gameItems.text['logs_' + idx].destroy();
+            }
+            gameItems.text['logs_' + idx] = game.add.bitmapText(beginX + sizeCell * (sizeGrid) + 5, beginY + gameItems.buttons.next.height + 10 + (idx * 30), 'font', log.msg, 25);
+            if (log.player === idPlayer) {
+                gameItems.text['logs_' + idx].tint = 0x308D16;
+            } else {
+                gameItems.text['logs_' + idx].tint = 0xB43B31;
+            }
+            idx++;
+        }
+    }
+
+    function displayAnimations() {
+        listSprite = [];
+        listAnimations = [];
+        let idx = 0;
+        for (const animation of statusGame.animations) {
+            const animX = (idPlayer === statusGame.firstPlayer) ? beginX + (animation.x * sizeCell) : beginX + ((14 - animation.x) * sizeCell);
+            const animY = (idPlayer === statusGame.firstPlayer) ? beginY + (animation.y * sizeCell) : beginY + ((14 - animation.y) * sizeCell);
+            if (inVisionOfArmy(animation.x, animation.y) === true) {
+                listSprite.push(game.add.sprite(animX, animY, animation.type, 1));
+                listSprite[idx].scale.setTo(0.17, 0.17);
+                listAnimations.push(listSprite[idx].animations.add(animation.type));
+                listAnimations[idx].onComplete.add(() => {nbAnimations--;}, this);
+                listAnimations[idx].play(animation.speed, false, true);
+                idx++;
+                nbAnimations++;
+            }
+        }
     }
 
     function addUnitButton(unit, army, event) {
+        let opacity = 1;
         if (inVisionOfArmy(unit.x, unit.y) === false) {
             return;
+        }
+        if (unit.type === "ninja" && unit.invisible === true) {
+            if (army === "enemyArmy") {
+                return;
+            } else {
+                opacity = 0.5;
+            }
         }
         const x = (idPlayer === statusGame.firstPlayer) ? beginX + (unit.x * sizeCell) : beginX + ((14 - unit.x) * sizeCell);
         const y = (idPlayer === statusGame.firstPlayer) ?  beginY  + (unit.y * sizeCell) : beginY  + ((14 - unit.y) * sizeCell);
         // add sprite unit
         const unitButton = game.add.button(x, y, unit.type, event);
         unitButton.scale.setTo(0.17, 0.17);
+        unitButton.alpha = opacity;
         gameItems.buttons[army][unit.idx] = unitButton;
         // add enemy border
         if (army === "enemyArmy") {
-            const enemyBorder = game.add.button(x, y, "enemyBorder", event);
+            const enemyBorder = game.add.button(x, y, "redBorder", event);
             enemyBorder.scale.setTo(0.15, 0.15);
             gameItems.buttons.enemiesBorder.push(enemyBorder);
         }
         // add blocked icon
-        if (unit.nbAttack === 0) {
+        if (unit.hasAttacked === true) {
             const blockedButton = game.add.button(x, y, "blocked", event);
             blockedButton.scale.setTo(0.17, 0.17);
             gameItems.buttons.blocked.push(blockedButton);
@@ -587,7 +701,7 @@
                     const fogY = (idPlayer === statusGame.firstPlayer) ? beginY + (y * sizeCell) : beginY + ((14 - y) * sizeCell);
                     const imgFog = game.add.image(fogX, fogY, "fog");
                     imgFog.scale.setTo(0.17, 0.17);
-                    imgFog.alpha = 0.7;
+                    imgFog.alpha = 0.8;
                     gameItems.images.fog.push(imgFog);
                 }
             }
@@ -604,14 +718,18 @@
     }
 
     function destroyArrayButtons(type) {
-        for (let idx = 0; idx < gameItems.buttons[type].length; idx++) {
-            gameItems.buttons[type][idx].destroy();
+        if (type in gameItems.buttons) {
+            for (let idx = 0; idx < gameItems.buttons[type].length; idx++) {
+                gameItems.buttons[type][idx].destroy();
+            }
         }
     }
 
     function destroyArrayImages(type) {
-        for (let idx = 0; idx < gameItems.images[type].length; idx++) {
-            gameItems.images[type][idx].destroy();
+        if (type in gameItems.images) {
+            for (let idx = 0; idx < gameItems.images[type].length; idx++) {
+                gameItems.images[type][idx].destroy();
+            }
         }
     }
 
@@ -620,32 +738,35 @@
         selectedUnit = null;
     }
 
-    function initGameItems() {
-        return {
-            graphics: null,
-            buttons: {},
-            text: {},
-            images: {}
-        };
+    function modifyName(name) {
+        name = name.charAt(0).toUpperCase() + name.substring(1);
+        while (name.indexOf("_") !== -1) {
+            name = name.replace("_", " ");
+        }
+        return name;
+    }
+
+    function setLineText(unit, color) {
+        gameItems.text.statsLine.text = `${modifyName(unit.type)} - HP: [${unit.hp}/${unit.maxHp}] DMG: [${unit.dmg}]`;
+        gameItems.text.statsLine.tint = color;
     }
 
     function event(unit) {
         if (selectedUnit === null || selectedUnit !== unit.idx) {
-            gameItems.text.statsLine.text = `Type: [${unit.type}] HP: [${unit.hp}/${unit.maxHp}] DMG: [${unit.dmg}]`;
-            gameItems.text.statsLine.tint = 0xFFFFFF;
-            if (myTurn === true && unit.nbAttack > 0) {
+            setLineText(unit, 0xFFFFFF);
+            if (myTurn === true && unit.hasAttacked === false) {
                 manageMove(unit);
                 selectedUnit = unit.idx;
             }
         } else {
+            gameItems.text.statsLine.text = "";
             destroyButtonsMove();
         }
     }
 
     function eventEnemy(unit) {
         if (selectedUnit === null || selectedUnit !== unit.idx * -1) {
-            gameItems.text.statsLine.text = `Type: [${unit.type}] HP: [${unit.hp}/${unit.maxHp}] DMG: [${unit.dmg}]`;
-            gameItems.text.statsLine.tint = 0xFF0000;
+            setLineText(unit, 0xFF0000);
             if (myTurn === true) {
                 showRangeEnemy(unit);
                 selectedUnit = unit.idx * -1;
@@ -673,6 +794,19 @@
         return false;
     }
 
+    function isOnShieldman(x, y) {
+        for (const enemy of statusGame.enemyArmy) {
+            if (x === enemy.x && y === enemy.y) {
+                if (enemy.type === 'shieldman') {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
     function isOnEnemy(offsetX, offsetY) {
         for (const unit of statusGame.enemyArmy) {
             if (unit.x === offsetX && unit.y === offsetY) {
@@ -692,11 +826,12 @@
         const y = (yTmp < offsetY) ? 1 : -1;
 
         while (xTmp !== offsetX || yTmp !== offsetY) {
-            if (isOnObstacle(xTmp, yTmp) === true) {
+            if (isOnObstacle(xTmp, yTmp) === true || isOnShieldman(xTmp, yTmp) === true) {
                 return 1;
             } else if (isMove === true) {
-                const status = (unit.type === "bowman" || unit.type === "crossbowman" || unit.type === "doctor") ? 2 : 1;
-                if ((xTmp !== unit.x || yTmp !== unit.y) && isOnEnemy(xTmp, yTmp) !== -1) {
+                const status = (unit.type === "bowman" || unit.type === "crossbowman") ? 2 : 1;
+                const idxEnemy = isOnEnemy(xTmp, yTmp);
+                if ((xTmp !== unit.x || yTmp !== unit.y) && idxEnemy !== -1) {
                     return status;
                 } else if (isOnAllie(xTmp, yTmp, unit, inMyArmy) === true) {
                     return status;
@@ -745,20 +880,21 @@
         gameItems.buttons["move"] = [];
         for (let offsetX = unit.x - (unit.move + unit.range); offsetX <= unit.x + (unit.move + unit.range); offsetX++) {
             for (let offsetY = unit.y - (unit.move + unit.range); offsetY <= unit.y + (unit.move + unit.range); offsetY++) {
-                const statusBehindObastacle = behindObstacleOrEnemy(offsetX, offsetY, unit, true, isMove(offsetX, offsetY, unit));
+                const canMove = isMove(offsetX, offsetY, unit);
+                const statusBehindObastacle = behindObstacleOrEnemy(offsetX, offsetY, unit, true, canMove);
                 if (statusBehindObastacle === 1) {
                     continue;
                 }
                 const idxEnemy = isOnEnemy(offsetX, offsetY);
                 const x = (idPlayer === statusGame.firstPlayer) ? beginX + (offsetX * sizeCell) : beginX + ((14 - offsetX) * sizeCell);
                 const y = (idPlayer === statusGame.firstPlayer) ?  beginY  + (offsetY * sizeCell) : beginY  + ((14 - offsetY) * sizeCell);
-                if (idxEnemy !== -1) {
+                if (idxEnemy !== -1 && (canMove === true || isInvisibleNinja(idxEnemy) === false)) {
                     const buttonMove = game.add.button(x, y, 'attack', () => {attackEnemy(unit, idxEnemy)});
                     buttonMove.scale.setTo(0.17, 0.17);
                     gameItems.buttons["move"].push(buttonMove);
                 } else if (haveToDisplayMove(offsetX, offsetY, unit, true)) {
                     let buttonMove = null;
-                    if (statusBehindObastacle === 0 && isMove(offsetX, offsetY, unit) === true) {
+                    if (statusBehindObastacle === 0 && canMove === true) {
                         buttonMove = game.add.button(x, y, 'move', () => {moveUnit(unit, offsetX, offsetY)});
                     } else if (statusBehindObastacle !== 1) {
                         buttonMove = game.add.button(x, y, 'range', () => {});
@@ -822,11 +958,23 @@
 
     function everyUnitHasAttacked() {
         for (const unit of statusGame.myArmy) {
-            if (unit.nbAttack > 0) {
+            if (unit.hasAttacked === false) {
                 return false;
             }
         }
         return true;
+    }
+
+    function isInvisibleNinja(idxEnemy, isMove) {
+        for (const enemy of statusGame.enemyArmy) {
+            if (enemy.idx === idxEnemy) {
+                if (enemy.type === 'ninja' && enemy.invisible === true) {
+                    return true;
+                }
+                break;
+            }
+        }
+        return false;
     }
 
     function checkTurnOver() {
@@ -834,19 +982,41 @@
             if (statusGame.nbActions <= 0 || everyUnitHasAttacked() === true) {
                 const url = `${baseUrl}/turn_over/${idRoom}?idPlayer=${idPlayer}`;
                 sendRequest(url, "GET");
-                gameItems.text["turn"].text = `Enemy's turn - ${statusGame.nbActions}/4`;
+                gameItems.text["turn"].text = `Enemy's turn - ${statusGame.nbActions}/${statusGame.maxNbActions}`;
+                gameItems.text["turn"].tint = 0xB43B31;
             } else {
-                gameItems.text["turn"].text = `Your turn - ${statusGame.nbActions}/4`;
+                gameItems.text["turn"].text = `Your turn - ${statusGame.nbActions}/${statusGame.maxNbActions}`;
+                gameItems.text["turn"].tint = 0xFFFFFF;
             }
         } else {
-            gameItems.text["turn"].text = `Enemy's turn - ${statusGame.nbActions}/4`;
+            gameItems.text["turn"].text = `Enemy's turn - ${statusGame.nbActions}/${statusGame.maxNbActions}`;
+            gameItems.text["turn"].tint = 0xB43B31;
         }
     }
 
     function skipTurn() {
-        destroyButtonsMove();
-        const url = `${baseUrl}/turn_over/${idRoom}?idPlayer=${idPlayer}`;
-        sendRequest(url, "GET");
+        if (myTurn === true) {
+            destroyButtonsMove();
+            destroyYourTurn();
+            const url = `${baseUrl}/turn_over/${idRoom}?idPlayer=${idPlayer}`;
+            sendRequest(url, "GET");
+        }
+    }
+
+    function displayYourTurn() {
+        gameItems.yourTurnAnimation.sprite = game.add.sprite(0, 0, 'animationYourTurn', 1);
+        gameItems.yourTurnAnimation.sprite.centerX = windowWidth / 2;
+        gameItems.yourTurnAnimation.sprite.centerY = windowHeight / 2;
+        gameItems.yourTurnAnimation.anim = gameItems.yourTurnAnimation.sprite.animations.add('yourTurn');
+        gameItems.yourTurnAnimation.anim.play(8, false, true);
+    }
+
+    function destroyYourTurn() {
+        if (gameItems.yourTurnAnimation.sprite !== null) {
+            gameItems.yourTurnAnimation.sprite.destroy();
+            gameItems.yourTurnAnimation.sprite = null;
+            gameItems.yourTurnAnimation.anim = null;
+        }
     }
 
     /* _________________________________ SCENE 4 - WINNER _________________________________ */
@@ -854,7 +1024,7 @@
     function displayWinner(idWinner) {
         // add title and icon
         winnerItems.title = game.add.bitmapText(0, 0, 'font', '', 40);
-        winnerItems.icon = game.add.image(0, 0, "king");
+        winnerItems.icon = game.add.image(0, 0, myLeader);
         if (idWinner === idPlayer) {
             winnerItems.title.text = "YOU WIN !";
             winnerItems.icon.scale.setTo(0.5, 0.5);
@@ -898,7 +1068,7 @@
         destroyWinnerMenu();
         const response = sendRequest(`${baseUrl}/reinit_room/${idRoom}?idPlayer=${idPlayer}`, "GET");
         if (response.firstToRetry === false) {
-            displaySelection();
+            displaySelectionLeader();
         }
     }
 
@@ -910,46 +1080,7 @@
         winnerItems = initWinnerItems();
     }
 
-    function initWinnerItems() {
-        return {
-            title: null,
-            icon: null,
-            buttonRetry: null,
-            buttonBack: null
-        }
-    }
-
     /* _________________________________ TOOLS _________________________________ */
-
-    function responsive() {
-        if (windowWidth !== window.innerWidth || windowHeight !== window.innerHeight) {
-            console.log(`${windowWidth} -> ${window.innerWidth} and ${windowHeight} -> ${window.innerHeight}`);
-            sizeScreenChanged = true;
-            windowWidth = window.innerWidth;
-            windowHeight = window.innerHeight;
-            game.width = windowWidth;
-            game.height = windowHeight;
-            if (idRoom === null) {
-                console.log('MENU');
-                destroyMenu();
-                displayMenu();
-            } else if (statusRoom === 1) {
-                console.log('WAITING');
-                destroyWaiting();
-                displayWaiting();
-            } else if (statusRoom === 2) {
-                console.log('SELECTION');
-                destroySelection();
-                displaySelection();
-            } else {
-                console.log('GRID');
-                destroyGrid();
-                displayGrid();
-                displayArmies();
-            }
-            sizeScreenChanged = false;
-        }
-    }
 
     function sendRequest(url, method, body=null) {
         const req = new XMLHttpRequest();

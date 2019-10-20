@@ -1,52 +1,37 @@
-const statsAllUnit = {
-    king: createUnitType("king", 8, 2, 1, 0, 1),
-    peasant: createUnitType("peasant", 5, 2, 2, 0, 1),
-    shieldman: createUnitType("shieldman", 10, 0, 2, 0, 1),
-    soldier: createUnitType("soldier", 6, 3, 2, 0, 1),
-    bowman: createUnitType("bowman", 5, 3, 2, 2, 1),
-    ninja: createUnitType("ninja", 6, 2, 3, 0, 2),
-    doctor: createUnitType("doctor", 7, 1, 2, 1, 1),
-    knight: createUnitType("knight", 12, 4, 2, 0, 1),
-    crossbowman: createUnitType("crossbowman", 7, 2, 1, 5, 2),
-    necromancer: createUnitType("necromancer", 6, 4, 1, 0, 1)
-};
-
-const listUnits = ["peasant", "shieldman", "soldier", "bowman", "ninja", "doctor", "knight", "crossbowman", "necromancer"];
-
-function createUnitType(type, hp, dmg, move, range, nbAttack) {
-    return {
-        type, hp, maxHp: hp, dmg, move, range, nbAttack, maxNbAttack: nbAttack
-    };
-}
+const listUnits = ["peasant", "shieldman", "bowman", "soldier", "ninja", "doctor", "knight", "crossbowman", "necromancer"];
 
 function copyJson(json) {
     return JSON.parse(JSON.stringify(json));
 }
 
-function getKingStats(firstPlayer, idxUnit) {
-    const king = copyJson(statsAllUnit.king);
-    king["x"] = 7;
-    king["y"] = (firstPlayer === true) ? 14 : 0;
-    king["idx"] = idxUnit;
-    return king;
+function createUnit(unitType, x, y, idxUnit, isLeader) {
+    let newUnit = null;
+    if (isLeader) {
+        newUnit = copyJson(global.CONFIG.leaders[unitType]);
+    } else {
+        newUnit = copyJson(global.CONFIG.units[unitType]);
+    }
+    newUnit["x"] = x;
+    newUnit["y"] = y;
+    newUnit["idx"] = idxUnit;
+    newUnit["hp"] = newUnit.maxHp;
+    newUnit["hasAttacked"] = false;
+    return newUnit;
 }
 
-function generateJsonArmy(nbUnits, idRoom, idPlayer) {
+function generateJsonArmy(leader, nbUnits, idRoom, idPlayer) {
     const firstPlayer = isFirstPlayer(idRoom, idPlayer)
     const army = [];
-    let idxUnit = 0;
+    let idxUnit = 1;
     let y = (firstPlayer === true) ? 13 : 1;
     let offset = 1;
     let nbLines = 1;
     let nbUnitOnLine = 0;
 
+    army.push(createUnit(leader, 7, (firstPlayer === true) ? 14 : 0, 0, true));
     for (const unit of listUnits) {
         for (let idx = 0; idx < nbUnits[unit]; idx++) {
-            const newUnit = copyJson(statsAllUnit[unit]);
-            newUnit["x"] = 7 + offset;
-            newUnit["y"] = y;
-            newUnit["idx"] = idxUnit;
-            army.push(newUnit);
+            army.push(createUnit(unit, offset + 7, y, idxUnit, false));
             offset *= -1;
             if ((nbLines % 2 === 1 && nbUnitOnLine % 2 === 1) || (nbLines % 2 === 0 && nbUnitOnLine % 2 === 0)) {
                 offset += 2;
@@ -65,7 +50,6 @@ function generateJsonArmy(nbUnits, idRoom, idPlayer) {
             }
         }
     }
-    army.push(getKingStats(firstPlayer, idxUnit))
     return army;
 }
 
@@ -86,12 +70,23 @@ function isFirstPlayer(idRoom, idPlayer) {
     }
 }
 
+function getLeaderOfArmy(idRoom, idPlayer) {
+    for (const unit of global.ROOMS[idRoom][idPlayer].army) {
+        if (unit.idx === 0) {
+            return unit.type;
+        }
+    }
+    return null;
+}
+
 function createArmy(req, res, next) {
+    const leader = req.body.leader;
     const nbUnits = req.body.army;
     const idPlayer = req.query.idPlayer;
     const idRoom = req.params.idRoom;
-    global.ROOMS[idRoom][idPlayer]["army"] = generateJsonArmy(nbUnits, idRoom, idPlayer);
+    global.ROOMS[idRoom][idPlayer]["army"] = generateJsonArmy(leader, nbUnits, idRoom, idPlayer);
     if (checkReady(idRoom) === true) {
+        global.ROOMS[idRoom]["nbActions"] = (getLeaderOfArmy(idRoom, global.ROOMS[idRoom].firstPlayer) === "queen_of_slaves") ? global.CONFIG.round.maxNbActions + 1 : global.CONFIG.round.maxNbActions;
         global.ROOMS[idRoom].status = 3;
     }
     res.send({
